@@ -34,7 +34,7 @@ binary_zip: $(ALL_TARGETS)
 	rmdir "$$TARGET"
 
 program_tgy_%: %.hex
-	avrdude -c stk500v2 -b 9600 -P /dev/ttyUSB0 -u -p m8 -U flash:w:$<:i
+	avrdude -c stk500v2 -b 9600 -P /dev/ttyACM0 -u -p m8 -U flash:w:$<:i
 
 program_usbasp_%: %.hex
 	avrdude -c usbasp -B.5 -p m8 -U flash:w:$<:i
@@ -57,7 +57,7 @@ bootload_usbasp:
 read: read_tgy
 
 read_tgy:
-	avrdude -c stk500v2 -b 9600 -P /dev/ttyUSB0 -u -p m8 -U flash:r:flash.hex:i -U eeprom:r:eeprom.hex:i
+	avrdude -c stk500v2 -b 9600 -P /dev/ttyACM0 -u -p m8 -U flash:r:flash.hex:i -U eeprom:r:eeprom.hex:i
 
 read_usbasp:
 	avrdude -c usbasp -u -p m8 -U flash:r:flash.hex:i -U eeprom:r:eeprom.hex:i

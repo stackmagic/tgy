@@ -160,8 +160,9 @@
 
 .equ	CPU_MHZ		= F_CPU / 1000000
 
-.equ	BOOT_LOADER	= 1	; Include Turnigy USB linker STK500v2 boot loader on PWM input pin
-.equ	BOOT_JUMP	= 1	; Jump to any boot loader when PWM input stays high
+; XXX
+.equ	BOOT_LOADER	= 0	; Include Turnigy USB linker STK500v2 boot loader on PWM input pin
+.equ	BOOT_JUMP	= 0	; Jump to any boot loader when PWM input stays high
 .equ	BOOT_START	= THIRDBOOTSTART
 
 .if !defined(COMP_PWM)
@@ -188,7 +189,7 @@
 .equ	RC_PULS_REVERSE	= 0	; Enable RC-car style forward/reverse throttle
 .equ	RC_CALIBRATION	= 1	; Support run-time calibration of min/max pulse lengths
 .equ	SLOW_THROTTLE	= 0	; Limit maximum throttle jump to try to prevent overcurrent
-.equ	BEACON		= 1	; Beep periodically when RC signal is lost
+.equ	BEACON		= 0	; Beep periodically when RC signal is lost
 .equ	BEACON_IDLE	= 0	; Beep periodically if idle for a long period
 .if !defined(CHECK_HARDWARE)
 .equ	CHECK_HARDWARE	= 0	; Check for correct pin configuration, sense inputs, and functioning MOSFETs
@@ -263,7 +264,7 @@
 .equ	START_DELAY_US	= 0	; Initial post-commutation wait during starting
 .endif
 .equ	START_DSTEP_US	= 8	; Microseconds per start delay step
-.equ	START_DELAY_INC	= 15	; Wait step count increase (wraps in a byte)
+.equ	START_DELAY_INC	= 0	; Wait step count increase (wraps in a byte)
 .equ	START_MOD_INC	= 4	; Start power modulation step count increase (wraps in a byte)
 .equ	START_MOD_LIMIT	= 48	; Value at which power is reduced to avoid overheating
 .equ	START_FAIL_INC	= 16	; start_tries step count increase (wraps in a byte, upon which we disarm)
@@ -1542,13 +1543,14 @@ t1ovfl_int:	in	i_sreg, SREG
 		lds	i_temp1, tcnt1x
 		inc	i_temp1
 		sts	tcnt1x, i_temp1
-		.if BEACON_IDLE
-		brne	t1ovfl_int0
-		lds	i_temp2, idle_beacon
-		inc	i_temp2
-		sts	idle_beacon, i_temp2
-t1ovfl_int0:
-		.endif
+; XXX
+;		.if BEACON_IDLE
+;		brne	t1ovfl_int0
+;		lds	i_temp2, idle_beacon
+;		inc	i_temp2
+;		sts	idle_beacon, i_temp2
+;t1ovfl_int0:
+;		.endif
 		andi	i_temp1, 15			; Every 16 overflows
 		brne	t1ovfl_int1
 		tst	rc_timeout
@@ -2377,14 +2379,16 @@ adc_wait:	sbic	ADCSRA, ADSC
 ; internal RC slows down when hot, making it impossible to reach full
 ; throttle.
 evaluate_rc_init:
-		.if USE_UART
-		sbrc	flags1, UART_MODE
-		rjmp	evaluate_rc_uart
-		.endif
-		.if USE_I2C
-		sbrc	flags1, I2C_MODE
-		rjmp	evaluate_rc_i2c
-		.endif
+; XXX
+;		.if USE_UART
+;		sbrc	flags1, UART_MODE
+;		rjmp	evaluate_rc_uart
+;		.endif
+; XXX
+;		.if USE_I2C
+;		sbrc	flags1, I2C_MODE
+;		rjmp	evaluate_rc_i2c
+;		.endif
 		.if USE_ICP || USE_INT0
 		cbr	flags1, (1<<EVAL_RC)
 	; Check if pulse is in aliased input range and toggle RCP_ALIAS to match
@@ -2396,96 +2400,97 @@ evaluate_rc_init:
 		sbrc	temp3, RCP_ALIAS	; Skip if zero (no change)
 		rjmp	puls_scale_alias_toggle	; or toggle RCP_ALIAS and rescale
 		.endif
-		.if RC_CALIBRATION
-		sbrc	flags0, NO_CALIBRATION	; Is it safe to calibrate now?
-		rjmp	evaluate_rc_puls
-	; If input is above PROGRAM_RC_PULS, we try calibrating throttle
-		ldi2	YL, YH, puls_high_l	; Start with high pulse calibration
-		rjmp	rc_prog1
-rc_prog0:	rcall	wait240ms		; Wait for stick movement to settle
-	; Collect average of throttle input pulse length
-rc_prog1:	rcall	rc_prog_get_rx		; Pulse length into temp1:temp2
-		movw	temp3, temp1		; Save starting pulse length
-		wdr
-rc_prog2:	mul	ZH, ZH			; Clear 24-bit result registers (0 * 0 -> temp5:temp6)
-		clr	temp7
-		cpi	YL, low(puls_high_l)	; Are we learning the high pulse?
-		brne	rc_prog3		; No, maybe the low pulse
-		ldi	temp2, 32 * 31/32	; Full speed pulse averaging count (slightly below exact)
-		cpi2	temp3, temp4, PROGRAM_RC_PULS * CPU_MHZ, temp1
-		brcc	rc_prog5		; Equal to or higher than PROGRAM_RC_PULS - start measuring
-		rjmp	evaluate_rc_puls	; Lower than PROGRAM_RC_PULS - exit programming
-rc_prog3:	lds	temp1, puls_high_l	; If not learning the high pulse, we should stay below it
-		cp	temp3, temp1
-		lds	temp1, puls_high_h
-		cpc	temp4, temp1
-rc_prog_brcc_prog1:				; Branch trampoline
-		brcc	rc_prog1		; Restart while pulse not lower than learned high pulse
-		ldi	temp2, 32 * 17/16	; Stop/reverse pulse (slightly above exact)
-		cpi	YL, low(puls_low_l)	; Are we learning the low pulse?
-		breq	rc_prog5		; Yes, start measuring
-rc_prog4:	lds	temp1, puls_low_l
-		cp	temp3, temp1
-		lds	temp1, puls_low_h
-		cpc	temp4, temp1
-		brcs	rc_prog1		; Restart while pulse lower than learned low pulse
-		ldi	temp2, 32		; Neutral pulse measurement (exact)
-rc_prog5:	mov	tcnt2h, temp2		; Abuse tcnt2h as pulse counter
-rc_prog6:	wdr
-		sbrs	flags1, EVAL_RC		; Wait for next pulse
-		rjmp	rc_prog6
-		cbr	flags1, (1<<EVAL_RC)
-		rcall	rc_prog_get_rx		; Pulse length into temp1:temp2
-		add	temp5, temp1		; Accumulate 24-bit average
-		adc	temp6, temp2
-		adc	temp7, ZH
-		sub	temp1, temp3		; Subtract the starting pulse from this one
-		sbc	temp2, temp4		; to find the drift since the starting pulse
-	; Check for excessive drift with an emulated signed comparison -
-	; add the drift amount to offset the negative side to 0
-		adiwx	temp1, temp2, MAX_DRIFT_PULS * CPU_MHZ
-	; ..then subtract the 2*drift + 1 -- carry will be clear if
-	; we drifted outside of the range
-		sbiwx	temp1, temp2, 2 * MAX_DRIFT_PULS * CPU_MHZ + 1
-		brcc	rc_prog0		; Wait and start over if input moved
-		dec	tcnt2h
-		brne	rc_prog6		; Loop until average accumulated
-		ldi	temp1, 3
-		rcall	lsl_temp567		; Multiply by 8 (so that 32 loops makes average*256)
-		st	Y+, temp6		; Save the top 16 bits as the result
-		st	Y+, temp7
-	; One beep: high (full speed) pulse received
-		rcall	beep_f3
-		cpi	YL, low(puls_high_l+2)
-		breq	rc_prog_brcc_prog1	; Go back to get low pulse
-	; Two beeps: low (stop/reverse) pulse received
-		rcall	wait30ms
-		rcall	beep_f3
-		cpi	YL, low(puls_low_l+2)
-		.if RC_PULS_REVERSE
-		breq	rc_prog_brcc_prog1	; Go back to get neutral pulse
-		.else
-		breq	rc_prog_done
-		.endif
-	; Three beeps: neutral pulse received
-		rcall	wait30ms
-		rcall	beep_f3
-rc_prog_done:	rcall	eeprom_write_block
-		rjmp	puls_scale		; Calculate the new scaling factors
-rc_prog_get_rx:
-		movw	temp1, rx_l		; Atomic copy of rc pulse length
-		.if defined(RCP_ALIAS_SHIFT)
-		sbrs	flags0, RCP_ALIAS
-		ret
-		ldi	XL, RCP_ALIAS_SHIFT
-rc_prog_get_rx1:
-		lsl	temp1
-		rol	temp2
-		dec	XL
-		brne	rc_prog_get_rx1
-		.endif
-		ret
-		.endif
+; XXX
+;		.if RC_CALIBRATION
+;		sbrc	flags0, NO_CALIBRATION	; Is it safe to calibrate now?
+;		rjmp	evaluate_rc_puls
+;	; If input is above PROGRAM_RC_PULS, we try calibrating throttle
+;		ldi2	YL, YH, puls_high_l	; Start with high pulse calibration
+;		rjmp	rc_prog1
+;rc_prog0:	rcall	wait240ms		; Wait for stick movement to settle
+;	; Collect average of throttle input pulse length
+;rc_prog1:	rcall	rc_prog_get_rx		; Pulse length into temp1:temp2
+;		movw	temp3, temp1		; Save starting pulse length
+;		wdr
+;rc_prog2:	mul	ZH, ZH			; Clear 24-bit result registers (0 * 0 -> temp5:temp6)
+;		clr	temp7
+;		cpi	YL, low(puls_high_l)	; Are we learning the high pulse?
+;		brne	rc_prog3		; No, maybe the low pulse
+;		ldi	temp2, 32 * 31/32	; Full speed pulse averaging count (slightly below exact)
+;		cpi2	temp3, temp4, PROGRAM_RC_PULS * CPU_MHZ, temp1
+;		brcc	rc_prog5		; Equal to or higher than PROGRAM_RC_PULS - start measuring
+;		rjmp	evaluate_rc_puls	; Lower than PROGRAM_RC_PULS - exit programming
+;rc_prog3:	lds	temp1, puls_high_l	; If not learning the high pulse, we should stay below it
+;		cp	temp3, temp1
+;		lds	temp1, puls_high_h
+;		cpc	temp4, temp1
+;rc_prog_brcc_prog1:				; Branch trampoline
+;		brcc	rc_prog1		; Restart while pulse not lower than learned high pulse
+;		ldi	temp2, 32 * 17/16	; Stop/reverse pulse (slightly above exact)
+;		cpi	YL, low(puls_low_l)	; Are we learning the low pulse?
+;		breq	rc_prog5		; Yes, start measuring
+;rc_prog4:	lds	temp1, puls_low_l
+;		cp	temp3, temp1
+;		lds	temp1, puls_low_h
+;		cpc	temp4, temp1
+;		brcs	rc_prog1		; Restart while pulse lower than learned low pulse
+;		ldi	temp2, 32		; Neutral pulse measurement (exact)
+;rc_prog5:	mov	tcnt2h, temp2		; Abuse tcnt2h as pulse counter
+;rc_prog6:	wdr
+;		sbrs	flags1, EVAL_RC		; Wait for next pulse
+;		rjmp	rc_prog6
+;		cbr	flags1, (1<<EVAL_RC)
+;		rcall	rc_prog_get_rx		; Pulse length into temp1:temp2
+;		add	temp5, temp1		; Accumulate 24-bit average
+;		adc	temp6, temp2
+;		adc	temp7, ZH
+;		sub	temp1, temp3		; Subtract the starting pulse from this one
+;		sbc	temp2, temp4		; to find the drift since the starting pulse
+;	; Check for excessive drift with an emulated signed comparison -
+;	; add the drift amount to offset the negative side to 0
+;		adiwx	temp1, temp2, MAX_DRIFT_PULS * CPU_MHZ
+;	; ..then subtract the 2*drift + 1 -- carry will be clear if
+;	; we drifted outside of the range
+;		sbiwx	temp1, temp2, 2 * MAX_DRIFT_PULS * CPU_MHZ + 1
+;		brcc	rc_prog0		; Wait and start over if input moved
+;		dec	tcnt2h
+;		brne	rc_prog6		; Loop until average accumulated
+;		ldi	temp1, 3
+;		rcall	lsl_temp567		; Multiply by 8 (so that 32 loops makes average*256)
+;		st	Y+, temp6		; Save the top 16 bits as the result
+;		st	Y+, temp7
+;	; One beep: high (full speed) pulse received
+;		rcall	beep_f3
+;		cpi	YL, low(puls_high_l+2)
+;		breq	rc_prog_brcc_prog1	; Go back to get low pulse
+;	; Two beeps: low (stop/reverse) pulse received
+;		rcall	wait30ms
+;		rcall	beep_f3
+;		cpi	YL, low(puls_low_l+2)
+;		.if RC_PULS_REVERSE
+;		breq	rc_prog_brcc_prog1	; Go back to get neutral pulse
+;		.else
+;		breq	rc_prog_done
+;		.endif
+;	; Three beeps: neutral pulse received
+;		rcall	wait30ms
+;		rcall	beep_f3
+;rc_prog_done:	rcall	eeprom_write_block
+;		rjmp	puls_scale		; Calculate the new scaling factors
+;rc_prog_get_rx:
+;		movw	temp1, rx_l		; Atomic copy of rc pulse length
+;		.if defined(RCP_ALIAS_SHIFT)
+;		sbrs	flags0, RCP_ALIAS
+;		ret
+;		ldi	XL, RCP_ALIAS_SHIFT
+;rc_prog_get_rx1:
+;		lsl	temp1
+;		rol	temp2
+;		dec	XL
+;		brne	rc_prog_get_rx1
+;		.endif
+;		ret
+;		.endif
 		.endif
 	; Fall through from evaluate_rc_init
 ;-----bko-----------------------------------------------------------------
@@ -3157,41 +3162,41 @@ switch_power_off:
 		.endif
 		ret
 ;-----bko-----------------------------------------------------------------
-.if BOOT_JUMP
-boot_loader_test:
-		.if USE_ICP
-		sbis	PINB, rcp_in		; Skip clear if ICP pin high
-		.elif USE_INT0 == 1
-		sbis	PIND, rcp_in		; Skip clear if INT0 pin high
-		.else
-		sbic	PIND, rcp_in		; Skip clear if INT0 pin low (inverted)
-		.endif
-		sts	rct_boot, ZH		; Clear rct_count when low
-		lds	temp1, rct_boot
-		sbrs	temp1, 5 		; Wait 32 * 16 * 65536us (~2s) before jumping
-boot_ret:	ret
+;.if BOOT_JUMP
+;boot_loader_test:
+;		.if USE_ICP
+;		sbis	PINB, rcp_in		; Skip clear if ICP pin high
+;		.elif USE_INT0 == 1
+;		sbis	PIND, rcp_in		; Skip clear if INT0 pin high
+;		.else
+;		sbic	PIND, rcp_in		; Skip clear if INT0 pin low (inverted)
+;		.endif
+;		sts	rct_boot, ZH		; Clear rct_count when low
+;		lds	temp1, rct_boot
+;		sbrs	temp1, 5 		; Wait 32 * 16 * 65536us (~2s) before jumping
+;boot_ret:	ret
 ; Check for boot loader presence
-		ldi	ZL, low(BOOT_START << 1)
-		cli				; Interrupts depend on ZH being 0
-		ldi	ZH, high(BOOT_START << 1)
-		lpm	temp1, Z+
-		lpm	temp2, Z
-		ldi	ZH, 0
-		sei
-		adiw	temp1, 1		; Check flash contents for 0xffff or 0x0000
-		sbiw	temp1, 2
-		brcs	boot_ret		; Return if boot loader area is empty
-boot_loader_jump:
-		cli
-		out	DDRB, ZH		; Tristate pins
-		out	DDRC, ZH
-		out	DDRD, ZH
-		outi	WDTCR, (1<<WDCE)+(1<<WDE), temp1
-		out	WDTCR, ZH		; Disable watchdog
-		lds	temp1, orig_osccal
-		out	OSCCAL, temp1		; Restore OSCCAL
-		rjmp	BOOT_START		; Jump to boot loader
-.endif
+;		ldi	ZL, low(BOOT_START << 1)
+;		cli				; Interrupts depend on ZH being 0
+;		ldi	ZH, high(BOOT_START << 1)
+;		lpm	temp1, Z+
+;		lpm	temp2, Z
+;		ldi	ZH, 0
+;		sei
+;		adiw	temp1, 1		; Check flash contents for 0xffff or 0x0000
+;		sbiw	temp1, 2
+;		brcs	boot_ret		; Return if boot loader area is empty
+;boot_loader_jump:
+;		cli
+;		out	DDRB, ZH		; Tristate pins
+;		out	DDRC, ZH
+;		out	DDRD, ZH
+;		outi	WDTCR, (1<<WDCE)+(1<<WDE), temp1
+;		out	WDTCR, ZH		; Disable watchdog
+;		lds	temp1, orig_osccal
+;		out	OSCCAL, temp1		; Restore OSCCAL
+;		rjmp	BOOT_START		; Jump to boot loader
+;.endif
 ;-----bko-----------------------------------------------------------------
 .if USE_I2C
 i2c_init:
@@ -3313,9 +3318,10 @@ clear_loop1:	cp	ZL, r0
 		bst	temp7, PORF		; Power-on reset
 		cpse	temp7, ZH		; or zero
 		brtc	init_no_porf
-		rcall	beep_f1			; Usual startup beeps
-		rcall	beep_f2
-		rcall	beep_f3
+; XXX
+;		rcall	beep_f1			; Usual startup beeps
+;		rcall	beep_f2
+;		rcall	beep_f3
 		rjmp	control_start
 init_no_porf:
 		sbrs	temp7, BORF		; Brown-out reset
@@ -3358,30 +3364,31 @@ init_bitbeep2:	sbrs	i_temp1, 0
 
 control_start:
 
+; XXX
 ; Check cell count
-.if BLIP_CELL_COUNT
-	.if defined(mux_voltage) && !CELL_COUNT
-		rcall	adc_cell_count
-		cpi	temp1, 5
-		brlo	cell_count_good		; Detection of >=~5 LiPo cells becomes ambiguous based on charge state
-		ldi	temp1, 0
-cell_count_good:
-	.else
-		ldi	temp1, CELL_COUNT
-	.endif
-		mov	YL, temp1		; Beep clobbers temp1-temp5
-		cpi	YL, 0
-		breq	cell_blipper1
-cell_blipper:
-		rcall	wait120ms
-		ldi	temp2, 10		; Short blip (not too long for this)
-		rcall	beep_f4_freq
-		dec	YL
-		brne	cell_blipper
-		rcall	wait120ms
-cell_blipper1:
-
-.endif
+;.if BLIP_CELL_COUNT
+;	.if defined(mux_voltage) && !CELL_COUNT
+;		rcall	adc_cell_count
+;		cpi	temp1, 5
+;		brlo	cell_count_good		; Detection of >=~5 LiPo cells becomes ambiguous based on charge state
+;		ldi	temp1, 0
+;cell_count_good:
+;	.else
+;		ldi	temp1, CELL_COUNT
+;	.endif
+;		mov	YL, temp1		; Beep clobbers temp1-temp5
+;		cpi	YL, 0
+;		breq	cell_blipper1
+;cell_blipper:
+;		rcall	wait120ms
+;		ldi	temp2, 10		; Short blip (not too long for this)
+;		rcall	beep_f4_freq
+;		dec	YL
+;		brne	cell_blipper
+;		rcall	wait120ms
+;cell_blipper1:
+;
+;.endif
 
 control_disarm:
 	; LEDs off while disarmed
@@ -3397,34 +3404,37 @@ control_disarm:
 		out	TIFR, temp1		; Clear TOIE1, OCIE1A, and TOIE2 flags
 		out	TIMSK, temp1		; Enable t1ovfl_int, t1oca_int, t2ovfl_int
 
-		.if defined(HK_PROGRAM_CARD)
-	; This program card seems to send data at 1200 baud N81,
-	; Messages start with 0xdd 0xdd, have 7 bytes of config,
-	; and end with 0xde, sent two seconds after power-up or
-	; after any jumper change.
-		.equ	BAUD_RATE = 1200
-		.equ	UBRR_VAL = F_CPU / BAUD_RATE / 16 - 1
-		outi	UBRRH, high(UBRR_VAL), temp1
-		outi	UBRRL, low(UBRR_VAL), temp1
-		sbi	UCSRB, RXEN		; Do programming card rx by polling
-		outi	UCSRC, (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0), temp1	; N81
-		.endif
+; XXX
+;		.if defined(HK_PROGRAM_CARD)
+;	; This program card seems to send data at 1200 baud N81,
+;	; Messages start with 0xdd 0xdd, have 7 bytes of config,
+;	; and end with 0xde, sent two seconds after power-up or
+;	; after any jumper change.
+;		.equ	BAUD_RATE = 1200
+;		.equ	UBRR_VAL = F_CPU / BAUD_RATE / 16 - 1
+;		outi	UBRRH, high(UBRR_VAL), temp1
+;		outi	UBRRL, low(UBRR_VAL), temp1
+;		sbi	UCSRB, RXEN		; Do programming card rx by polling
+;		outi	UCSRC, (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0), temp1	; N81
+;		.endif
 
 	; Initialize input sources (i2c and/or rc-puls)
-		.if USE_UART && !defined(HK_PROGRAM_CARD)
-		.equ	BAUD_RATE = 38400
-		.equ	UBRR_VAL = F_CPU / BAUD_RATE / 16 - 1
-		outi	UBRRH, high(UBRR_VAL), temp1
-		outi	UBRRL, low(UBRR_VAL), temp1
-		sbi	UCSRB, RXEN		; We don't actually tx
-		outi	UCSRC, (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0), temp1	; N81
-		in	temp1, UDR
-		sbi	UCSRA, RXC		; clear flag
-		sbi	UCSRB, RXCIE		; enable reception irq
-		.endif
-		.if USE_I2C
-		rcall	i2c_init
-		.endif
+; XXX
+;		.if USE_UART && !defined(HK_PROGRAM_CARD)
+;		.equ	BAUD_RATE = 38400
+;		.equ	UBRR_VAL = F_CPU / BAUD_RATE / 16 - 1
+;		outi	UBRRH, high(UBRR_VAL), temp1
+;		outi	UBRRL, low(UBRR_VAL), temp1
+;		sbi	UCSRB, RXEN		; We don't actually tx
+;		outi	UCSRC, (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0), temp1	; N81
+;		in	temp1, UDR
+;		sbi	UCSRA, RXC		; clear flag
+;		sbi	UCSRB, RXCIE		; enable reception irq
+;		.endif
+; XXX
+;		.if USE_I2C
+;		rcall	i2c_init
+;		.endif
 		.if USE_INT0 || USE_ICP
 		rcp_int_rising_edge temp1
 		rcp_int_enable temp1
@@ -3437,22 +3447,25 @@ i_rc_puls1:	clr	rc_timeout
 		sts	rct_boot, ZH
 		sts	rct_beacon, ZH
 i_rc_puls2:	wdr
-		.if defined(HK_PROGRAM_CARD)
-		.endif
-		sbrc	flags1, EVAL_RC
-		rjmp	i_rc_puls_rx
-		.if BOOT_JUMP
-		rcall	boot_loader_test
-		.endif
-		.if BEACON
-		lds	temp1, rct_beacon
-		cpi	temp1, 120		; Beep every 120 * 16 * 65536us (~8s)
-		brne	i_rc_puls2
-		ldi	temp1, 60
-		sts	rct_beacon, temp1	; Double rate after the first beep
-		rcall	beep_f3			; Beacon
-		.endif
-		rjmp	i_rc_puls2
+; XXX
+;		.if defined(HK_PROGRAM_CARD)
+;		.endif
+;		sbrc	flags1, EVAL_RC
+;		rjmp	i_rc_puls_rx
+; XXX
+;		.if BOOT_JUMP
+;		rcall	boot_loader_test
+;		.endif
+; XXX
+;		.if BEACON
+;		lds	temp1, rct_beacon
+;		cpi	temp1, 120		; Beep every 120 * 16 * 65536us (~8s)
+;		brne	i_rc_puls2
+;		ldi	temp1, 60
+;		sts	rct_beacon, temp1	; Double rate after the first beep
+;		rcall	beep_f3			; Beacon
+;		.endif
+;		rjmp	i_rc_puls2
 i_rc_puls_rx:	rcall	evaluate_rc_init
 		lds	YL, rc_duty_l
 		lds	YH, rc_duty_h
@@ -3461,14 +3474,15 @@ i_rc_puls_rx:	rcall	evaluate_rc_init
 		ldi	temp1, 10		; wait for this count of receiving power off
 		cp	rc_timeout, temp1
 		brlo	i_rc_puls2
-		.if USE_I2C
-		sbrs	flags1, I2C_MODE
-		out	TWCR, ZH		; Turn off I2C and interrupt
-		.endif
-		.if USE_UART
-		sbrs	flags1, UART_MODE
-		cbi	UCSRB, RXEN		; Turn off receiver
-		.endif
+; XXX
+;		.if USE_I2C
+;		sbrs	flags1, I2C_MODE
+;		out	TWCR, ZH		; Turn off I2C and interrupt
+;		.endif
+;		.if USE_UART
+;		sbrs	flags1, UART_MODE
+;		cbi	UCSRB, RXEN		; Turn off receiver
+;		.endif
 		.if USE_INT0 || USE_ICP
 		mov	temp1, flags1
 		andi	temp1, (1<<I2C_MODE)+(1<<UART_MODE)
@@ -3477,9 +3491,10 @@ i_rc_puls_rx:	rcall	evaluate_rc_init
 i_rc_puls3:
 		.endif
 
-		rcall	beep_f4			; signal: rcpuls ready
-		rcall	beep_f4
-		rcall	beep_f4
+; XXX
+;		rcall	beep_f4			; signal: rcpuls ready
+;		rcall	beep_f4
+;		rcall	beep_f4
 		cbr     flags0, (1<<RCP_ERROR)
 
 	; Fall through to restart_control
@@ -3487,72 +3502,77 @@ i_rc_puls3:
 restart_control:
 		rcall	switch_power_off	; Disables PWM timer, turns off all FETs
 		cbr	flags0, (1<<SET_DUTY)	; Do not yet set duty on input
-		.if BEACON_IDLE
-		sts	idle_beacon, ZH
-		.endif
-		GRN_on				; Green on while armed and idle or braking
-		RED_off
-		BLUE_off
+; XXX
+;		.if BEACON_IDLE
+;		sts	idle_beacon, ZH
+;		.endif
+;		GRN_on				; Green on while armed and idle or braking
+;		RED_off
+;		BLUE_off
 wait_for_power_on_init:
 		sts	rct_boot, ZH
 		sts	rct_beacon, ZH
 
-		.if MOTOR_BRAKE || LOW_BRAKE
-		lds	temp3, brake_want
-		lds	temp4, brake_active
-		cp	temp3, temp4
-		breq	wait_for_power_on
-
-		rcall	switch_power_off	; Disable any active brake
-		sts	brake_active, temp3	; Set new brake_active to brake_want
-
-		cpi	temp3, 1		; Neutral brake
-		brne	set_brake1
-		ldi	YL, 1 << low(BRAKE_SPEED)
-		sts	brake_sub, YL
-		ldi2	YL, YH, BRAKE_POWER
-		rjmp	set_brake_duty
-
-set_brake1:	cpi	temp3, 2		; Thumb brake
-		brne	wait_for_power_on
-		ldi	YL, 1 << low(LOW_BRAKE_SPEED)
-		sts	brake_sub, YL
-		ldi2	YL, YH, LOW_BRAKE_POWER
-
-set_brake_duty:	ldi2	temp1, temp2, MAX_POWER
-		sub	temp1, YL		; Calculate OFF duty
-		sbc	temp2, YH
-		rcall	set_new_duty_set
-		ldi	ZL, low(pwm_brake_off)	; Enable PWM brake mode
-		clr	tcnt2h
-		clr	sys_control_l		; Abused as duty update divisor
-		outi	TCCR2, T2CLK, temp1	; Enable PWM, cleared later by switch_power_off
-		.endif
+; XXX
+;		.if MOTOR_BRAKE || LOW_BRAKE
+;		lds	temp3, brake_want
+;		lds	temp4, brake_active
+;		cp	temp3, temp4
+;		breq	wait_for_power_on
+;
+;		rcall	switch_power_off	; Disable any active brake
+;		sts	brake_active, temp3	; Set new brake_active to brake_want
+;
+;		cpi	temp3, 1		; Neutral brake
+;		brne	set_brake1
+;		ldi	YL, 1 << low(BRAKE_SPEED)
+;		sts	brake_sub, YL
+;		ldi2	YL, YH, BRAKE_POWER
+;		rjmp	set_brake_duty
+;
+;set_brake1:	cpi	temp3, 2		; Thumb brake
+;		brne	wait_for_power_on
+;		ldi	YL, 1 << low(LOW_BRAKE_SPEED)
+;		sts	brake_sub, YL
+;		ldi2	YL, YH, LOW_BRAKE_POWER
+;
+;set_brake_duty:	ldi2	temp1, temp2, MAX_POWER
+;		sub	temp1, YL		; Calculate OFF duty
+;		sbc	temp2, YH
+;		rcall	set_new_duty_set
+;		ldi	ZL, low(pwm_brake_off)	; Enable PWM brake mode
+;		clr	tcnt2h
+;		clr	sys_control_l		; Abused as duty update divisor
+;		outi	TCCR2, T2CLK, temp1	; Enable PWM, cleared later by switch_power_off
+;		.endif
 
 wait_for_power_on:
 		wdr
 		sbrc	flags1, EVAL_RC
 		rjmp	wait_for_power_rx
-		.if BEEP_RCP_ERROR
-		sbrc	flags0, RCP_ERROR	; Check if we've seen bad PWM edges
-		rcall	rcp_error_beep
-		.endif
-		.if BEACON_IDLE
-		lds	temp1, idle_beacon
-		cpi	temp1, 240		; Beep after ~4 minutes
-		brcs	no_idle_beep
-		ldi	temp1, 238
-		sts	idle_beacon, temp1
-		rcall	switch_power_off	; Brake may have been on
-		rcall	wait30ms
-		rcall	beep_f4
-no_idle_beep:
-		.endif
+; XXX
+;		.if BEEP_RCP_ERROR
+;		sbrc	flags0, RCP_ERROR	; Check if we've seen bad PWM edges
+;		rcall	rcp_error_beep
+;		.endif
+; XXX
+;		.if BEACON_IDLE
+;		lds	temp1, idle_beacon
+;		cpi	temp1, 240		; Beep after ~4 minutes
+;		brcs	no_idle_beep
+;		ldi	temp1, 238
+;		sts	idle_beacon, temp1
+;		rcall	switch_power_off	; Brake may have been on
+;		rcall	wait30ms
+;		rcall	beep_f4
+;no_idle_beep:
+;		.endif
 		tst	rc_timeout
 		brne	wait_for_power_on	; Tight loop unless rc_timeout is zero
-		.if BOOT_JUMP
-		rcall	boot_loader_test
-		.endif
+; XXX
+;		.if BOOT_JUMP
+;		rcall	boot_loader_test
+;		.endif
 		lds	temp1, rct_beacon
 		cpi	temp1, 30		; Disarm after ~2 seconds of no signal
 		brne	wait_for_power_on
@@ -3563,24 +3583,26 @@ no_idle_beep:
 		rjmp	control_disarm		; Do not start motor until neutral signal received once again
 
 wait_for_power_rx:
-		.if USE_I2C
-		sbrc	flags0, EEPROM_RESET
-		rcall	eeprom_reset_block
-		sbrc	flags0, EEPROM_WRITE
-		rcall	eeprom_write_block
-		.endif
+; XXX
+;		.if USE_I2C
+;		sbrc	flags0, EEPROM_RESET
+;		rcall	eeprom_reset_block
+;		sbrc	flags0, EEPROM_WRITE
+;		rcall	eeprom_write_block
+;		.endif
 		rcall	evaluate_rc		; Only get rc_duty, don't set duty
-		tst	rc_timeout		; If not a valid signal, loop
-		breq	wait_for_power_on	; while increasing boot/beacon timers
-		adiw	YL, 0			; If no power requested yet, loop
-		breq	wait_for_power_on_init	; while resetting boot/beacon timers
+;		tst	rc_timeout		; If not a valid signal, loop
+;		breq	wait_for_power_on	; while increasing boot/beacon timers
+;		adiw	YL, 0			; If no power requested yet, loop
+;		breq	wait_for_power_on_init	; while resetting boot/beacon timers
 
 start_from_running:
 		rcall	switch_power_off
 		comp_init temp1			; init comparator
-		RED_off
-		GRN_off
-		BLUE_on
+; XXX
+;		RED_off
+;		GRN_off
+;		BLUE_on
 
 		ldi2	YL, YH, PWR_MIN_START	; Start with limited power to reduce the chance that we
 		movw	sys_control_l, YL	; align to a timing harmonic
@@ -3589,7 +3611,8 @@ start_from_running:
 		; Set STARTUP flag and call update_timing which will set
 		; last_tcnt1 and set the duty (limited by STARTUP) and
 		; set POWER_ON.
-		rcall	wait_timeout_init
+; XXX
+;		rcall	wait_timeout_init
 		sts	start_delay, ZH
 		sts	start_modulate, ZH
 		sts	start_fail, ZH
